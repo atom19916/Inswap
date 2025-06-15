@@ -149,8 +149,19 @@ def faceswap_tab():
 
             with gr.Column(scale=2):
                 previewimage = gr.Image(label="Preview Image", height=576, interactive=False, visible=True, format=get_gradio_output_format())
-                maskimage = gr.ImageEditor(label="Manual mask Image", sources=["clipboard"], transforms="", type="numpy",
-                                             brush=gr.Brush(color_mode="fixed", colors=["rgba(255, 255, 255, 1"]), interactive=True, visible=False)
+                # maskimage = gr.ImageEditor(label="Manual mask Image", sources=["clipboard"], transforms="", type="numpy",
+                #                              brush=gr.Brush(color_mode="fixed", colors=["rgba(255, 255, 255, 1"]), interactive=True, visible=False)
+                
+                maskimage = gr.ImageEditor(
+    label="Manual mask Image",
+    sources=["clipboard"],
+    transforms="", 
+    type="numpy",
+    brush=gr.Brush(color_mode="fixed", colors=["rgba(255, 255, 255, 1)"]),  # Fixed missing parenthesis
+    interactive=True, 
+    visible=False,
+    layers=[create_blank_image(512, 512)]  # Initialize with empty layer
+)
                 with gr.Row(variant='panel'):
                     fake_preview = gr.Checkbox(label="Face swap frames", value=False)
                     bt_refresh_preview = gr.Button("🔄 Refresh", variant='secondary', size='sm')
@@ -548,8 +559,15 @@ def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhance
     if current_frame is None:
         return None, None, gr.Slider(info=timeinfo)
     
-    layers = None
-    if maskimage is not None:
+    # layers = None
+    # if maskimage is not None:
+    #     layers = maskimage["layers"]
+    
+    layers = []
+    if (maskimage is not None and 
+        isinstance(maskimage, dict) and 
+        "layers" in maskimage and 
+        maskimage["layers"] is not None):
         layers = maskimage["layers"]
 
     if not fake_preview or len(roop.globals.INPUT_FACESETS) < 1:
@@ -568,7 +586,7 @@ def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhance
     mask_engine = map_mask_engine(selected_mask_engine, clip_text)
 
     roop.globals.execution_threads = roop.globals.CFG.max_threads
-    mask = layers[0] if layers is not None else None
+    mask = layers[0] if len(layers) > 0 else None  # Fixed line
     face_index = SELECTED_INPUT_FACE_INDEX
     if len(roop.globals.INPUT_FACESETS) <= face_index:
         face_index = 0
@@ -593,15 +611,45 @@ def map_mask_engine(selected_mask_engine, clip_text):
     return mask_engine
 
 
+# def on_toggle_masking(previewimage, mask):
+#     global manual_masking
+
+#     manual_masking = not manual_masking
+#     if manual_masking:
+#         layers = mask["layers"]
+#         if len(layers) == 1:
+#             layers = [create_blank_image(previewimage.shape[1],previewimage.shape[0])]
+#         return gr.Image(visible=False), gr.ImageEditor(value={"background": previewimage, "layers": layers, "composite": None}, visible=True)
+#     return gr.Image(visible=True), gr.ImageEditor(visible=False)
+
+
 def on_toggle_masking(previewimage, mask):
     global manual_masking
-
+    
     manual_masking = not manual_masking
     if manual_masking:
-        layers = mask["layers"]
-        if len(layers) == 1:
-            layers = [create_blank_image(previewimage.shape[1],previewimage.shape[0])]
-        return gr.Image(visible=False), gr.ImageEditor(value={"background": previewimage, "layers": layers, "composite": None}, visible=True)
+        # Ensure we always have valid layers
+        if mask is None or "layers" not in mask or len(mask["layers"]) == 0:
+            if previewimage is not None:
+                height, width = previewimage.shape[:2]
+                blank_layer = create_blank_image(width, height)
+            else:
+                blank_layer = create_blank_image(512, 512)
+            layers = [blank_layer]
+        else:
+            layers = mask["layers"]
+            
+        return (
+            gr.Image(visible=False),
+            gr.ImageEditor(
+                value={
+                    "background": previewimage,
+                    "layers": layers,
+                    "composite": None
+                },
+                visible=True
+            )
+        )
     return gr.Image(visible=True), gr.ImageEditor(visible=False)
 
 def gen_processing_text(start, end):
