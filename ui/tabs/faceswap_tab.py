@@ -526,7 +526,7 @@ def on_end_face_selection():
 
 
 def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhancer, detection, face_distance, blend_ratio,
-                              selected_mask_engine, clip_text, no_face_action, vr_mode, auto_rotate, maskimage, show_face_area, restore_original_mouth, num_steps, upsample):
+                          selected_mask_engine, clip_text, no_face_action, vr_mode, auto_rotate, maskimage, show_face_area, restore_original_mouth, num_steps, upsample):
     global SELECTED_INPUT_FACE_INDEX, manual_masking, current_video_fps
 
     from roop.core import live_swap, get_processing_plugins
@@ -540,7 +540,7 @@ def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhance
 
     timeinfo = '0:00:00'
     if files is None or selected_preview_index >= len(files) or frame_num is None:
-        return None,None, gr.Slider(info=timeinfo)
+        return None, None, gr.Slider(info=timeinfo)
 
     filename = files[selected_preview_index].name
     if util.is_video(filename) or filename.lower().endswith('gif'):
@@ -559,16 +559,13 @@ def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhance
     if current_frame is None:
         return None, None, gr.Slider(info=timeinfo)
     
-    # layers = None
-    # if maskimage is not None:
-    #     layers = maskimage["layers"]
-    
-    layers = []
+    # Handle mask from ImageEditor
+    mask = None
     if (maskimage is not None and 
         isinstance(maskimage, dict) and 
         "layers" in maskimage and 
-        maskimage["layers"] is not None):
-        layers = maskimage["layers"]
+        len(maskimage["layers"]) > 0):
+        mask = maskimage["layers"][0]
 
     if not fake_preview or len(roop.globals.INPUT_FACESETS) < 1:
         return gr.Image(value=util.convert_to_gradio(current_frame), visible=True), gr.ImageEditor(visible=False), gr.Slider(info=timeinfo)
@@ -582,17 +579,27 @@ def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhance
     roop.globals.autorotate_faces = auto_rotate
     roop.globals.subsample_size = int(upsample[:3])
 
-
     mask_engine = map_mask_engine(selected_mask_engine, clip_text)
-
     roop.globals.execution_threads = roop.globals.CFG.max_threads
-    mask = layers[0] if len(layers) > 0 else None  # Fixed line
+    
     face_index = SELECTED_INPUT_FACE_INDEX
     if len(roop.globals.INPUT_FACESETS) <= face_index:
         face_index = 0
    
-    options = ProcessOptions(swap_model, get_processing_plugins(mask_engine), roop.globals.distance_threshold, roop.globals.blend_ratio,
-                              roop.globals.face_swap_mode, face_index, clip_text, maskimage, num_steps, roop.globals.subsample_size, show_face_area, restore_original_mouth)
+    options = ProcessOptions(
+        swap_model, 
+        get_processing_plugins(mask_engine), 
+        roop.globals.distance_threshold, 
+        roop.globals.blend_ratio,
+        roop.globals.face_swap_mode, 
+        face_index, 
+        clip_text, 
+        mask,  # Pass the extracted mask layer, not the full ImageEditor dict
+        num_steps, 
+        roop.globals.subsample_size, 
+        show_face_area, 
+        restore_original_mouth
+    )
 
     current_frame = live_swap(current_frame, options)
     if current_frame is None:
@@ -733,8 +740,8 @@ def translate_swap_mode(dropdown_text):
     return "all"
 
 
-def start_swap( swap_model, output_method, enhancer, detection, keep_frames, wait_after_extraction, skip_audio, face_distance, blend_ratio,
-                selected_mask_engine, clip_text, processing_method, no_face_action, vr_mode, autorotate, restore_original_mouth, num_swap_steps, upsample, imagemask, progress=gr.Progress()):
+def start_swap(swap_model, output_method, enhancer, detection, keep_frames, wait_after_extraction, skip_audio, face_distance, blend_ratio,
+              selected_mask_engine, clip_text, processing_method, no_face_action, vr_mode, autorotate, restore_original_mouth, num_swap_steps, upsample, imagemask, progress=gr.Progress()):
     from ui.main import prepare_environment
     from roop.core import batch_process_regular
     global is_processing, list_files_process
@@ -750,6 +757,15 @@ def start_swap( swap_model, output_method, enhancer, detection, keep_frames, wai
         gr.Warning(msg)
 
     prepare_environment()
+
+    # Handle mask from ImageEditor
+    mask = None
+    if imagemask is not None:
+        if isinstance(imagemask, dict) and "layers" in imagemask:
+            if len(imagemask["layers"]) > 0:
+                mask = imagemask["layers"][0]
+        elif hasattr(imagemask, 'shape'):
+            mask = imagemask
 
     roop.globals.selected_enhancer = enhancer
     roop.globals.target_path = None
@@ -777,15 +793,17 @@ def start_swap( swap_model, output_method, enhancer, detection, keep_frames, wai
     roop.globals.video_quality = roop.globals.CFG.video_quality
     roop.globals.max_memory = roop.globals.CFG.memory_limit if roop.globals.CFG.memory_limit > 0 else None
 
-    batch_process_regular(swap_model, output_method, list_files_process, mask_engine, clip_text, processing_method == "In-Memory processing", imagemask, restore_original_mouth, num_swap_steps, progress, SELECTED_INPUT_FACE_INDEX)
+    batch_process_regular(swap_model, output_method, list_files_process, mask_engine, clip_text, 
+                         processing_method == "In-Memory processing", mask, restore_original_mouth, 
+                         num_swap_steps, progress, SELECTED_INPUT_FACE_INDEX)
+    
     is_processing = False
     outdir = pathlib.Path(roop.globals.output_path)
     outfiles = [str(item) for item in outdir.rglob("*") if item.is_file()]
     if len(outfiles) > 0:
-        yield gr.Button(variant="primary", interactive=True),gr.Button(variant="secondary", interactive=False),gr.Files(value=outfiles)
+        yield gr.Button(variant="primary", interactive=True), gr.Button(variant="secondary", interactive=False), gr.Files(value=outfiles)
     else:
-        yield gr.Button(variant="primary", interactive=True),gr.Button(variant="secondary", interactive=False),None
-
+        yield gr.Button(variant="primary", interactive=True), gr.Button(variant="secondary", interactive=False), None
 
 def stop_swap():
     roop.globals.processing = False

@@ -409,17 +409,25 @@ class ProcessMgr():
 
     def swap_faces(self, frame, temp_frame):
         num_faces_found = 0
+        
+        # Handle mask from ImageEditor
+        mask = None
+        if self.options.imagemask is not None:
+            if isinstance(self.options.imagemask, dict) and "layers" in self.options.imagemask:
+                # Get first layer from ImageEditor
+                if len(self.options.imagemask["layers"]) > 0:
+                    mask = self.options.imagemask["layers"][0]
+            elif hasattr(self.options.imagemask, 'shape'):  # Direct numpy array
+                mask = self.options.imagemask
 
         if self.options.swap_mode == "first":
             face = get_first_face(frame)
-
             if face is None:
                 return num_faces_found, frame
             
             num_faces_found += 1
             temp_frame = self.process_face(self.options.selected_index, face, temp_frame)
             del face
-
         else:
             faces = get_all_faces(frame)
             if faces is None:
@@ -431,7 +439,7 @@ class ProcessMgr():
                     temp_frame = self.process_face(self.options.selected_index, face, temp_frame)
 
             elif self.options.swap_mode == "all_input" or self.options.swap_mode == "all_random":
-                for i,face in enumerate(faces):
+                for i, face in enumerate(faces):
                     num_faces_found += 1
                     if i < len(self.input_face_datas):
                         temp_frame = self.process_face(i, face, temp_frame)
@@ -441,7 +449,7 @@ class ProcessMgr():
             elif self.options.swap_mode == "selected":
                 num_targetfaces = len(self.target_face_datas) 
                 use_index = num_targetfaces == 1
-                for i,tf in enumerate(self.target_face_datas):
+                for i, tf in enumerate(self.target_face_datas):
                     for face in faces:
                         if compute_cosine_distance(tf.embedding, face.embedding) <= self.options.face_distance_threshold:
                             if i < len(self.input_face_datas):
@@ -452,6 +460,7 @@ class ProcessMgr():
                                 num_faces_found += 1
                             if not roop.globals.vr_mode and num_faces_found == num_targetfaces:
                                 break
+            
             elif self.options.swap_mode == "all_female" or self.options.swap_mode == "all_male":
                 gender = 'F' if self.options.swap_mode == "all_female" else 'M'
                 for face in faces:
@@ -459,24 +468,23 @@ class ProcessMgr():
                         num_faces_found += 1
                         temp_frame = self.process_face(self.options.selected_index, face, temp_frame)
             
-            # might be slower but way more clean to release everything here
+            # Clean up faces
             for face in faces:
                 del face
             faces.clear()
 
-
-
         if roop.globals.vr_mode and num_faces_found % 2 > 0:
-            # stereo image, there has to be an even number of faces
+            # stereo image needs even number of faces
             num_faces_found = 0
             return num_faces_found, frame
+        
         if num_faces_found == 0:
             return num_faces_found, frame
 
-        #maskprocessor = next((x for x in self.processors if x.type == 'mask'), None)
-
-        if self.options.imagemask is not None and self.options.imagemask.shape == frame.shape:
-            temp_frame = self.simple_blend_with_mask(temp_frame, frame, self.options.imagemask)
+        # Apply mask if available
+        if mask is not None and hasattr(mask, 'shape') and mask.shape == frame.shape[:2]:
+            temp_frame = self.simple_blend_with_mask(temp_frame, frame, mask)
+        
         return num_faces_found, temp_frame
 
 
